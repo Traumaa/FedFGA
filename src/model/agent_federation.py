@@ -123,18 +123,20 @@ class Agent:
                 # 当开始测试1.0模型时，测试倒数第二层的点火率
                 # print(print(f"Firerate type: {type(firerate)}"))
                 # 在 firerate 计算后，选择通道：
-                max_firerate_channels = sorted(enumerate(firerate), key=lambda x: x[1], reverse=True)[:32]
+                max_firerate_channels = sorted(enumerate(firerate), key=lambda x: x[1], reverse=True)
                 # 打印或使用这些通道
-                print("Top 32 channels with highest firerate:")
-                for channel_idx, firerate_value in max_firerate_channels:
-                    print(f"Channel {channel_idx}: {firerate_value}")
+                # print("Top 32 channels with highest firerate:")
+                # for channel_idx, firerate_value in max_firerate_channels:
+                #     print(f"Channel {channel_idx}: {firerate_value}")
 
                 # 将通道保存至top_channels_indices
                 top_channels_indices = [channel_idx for channel_idx, _ in max_firerate_channels]
                 self.top_channels_indices = top_channels_indices
                 print("\nfirerate:\n", firerate)
                 print(self.top_channels_indices)
-                self.plot_firing_rate(firerate)
+                # self.plot_firing_rate(firerate)
+                # sorted_firerate = [rate for _, rate in max_firerate_channels]
+                # self.plot_firing_rate(sorted_firerate)
 
             # todo: 拆分完整网络参数并赋值给0.25网络
             run.log({"acc @ {}".format(self.fractions[i]): 100-self.loss_list[i].log_test[-1, self.args.top]},step=epoch-1)
