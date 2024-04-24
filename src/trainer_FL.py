@@ -123,9 +123,6 @@ class Trainer:
 
 
         self.sync(budget_record, agent_joined, agent_budget)
-        self.budget_record = budget_record
-        self.agent_joined = agent_joined
-        self.agent_budget = agent_budget
         # 训练完成后，中心服务器和客户端中的网络参数进行同步（聚合并下发）
         # 这里的sync函数负责生成两个字典【将filter加权聚合，将其他参数加权聚合】，然后分别发送给服务器和客户端
 
@@ -297,7 +294,7 @@ class Trainer:
 
         # Step 4: 处理 1.0 的张量
         # 直接使用1.0的张量，因为无需合并
-        merged_tensors[1.0] = weights_dict[1.0]
+        # merged_tensors[1.0] = weights_dict[1.0]
 
         final_tensor = weights_dict[1.0]  #
 
@@ -330,7 +327,7 @@ class Trainer:
         第二个维度暂时按照顺序进行选取
         '''
 
-        # 筛选出的通道
+        # 筛选出的通道索引
         top_channels_indices_25 = self.top_channels_indices[:32]
         top_channels_indices_50 = self.top_channels_indices[:64]
         top_channels_indices_75 = self.top_channels_indices[:96]
@@ -343,6 +340,8 @@ class Trainer:
         '''
                目的是将1.0网络中conv2.conv.1.weight拆分成4个张量，分别对应0.25，0.5，0.75，1.0，赋值给不同规模网络
                得先把1.0 网络中的conv2.conv.1.weight取出来，然后根据点火率进行拆分操作（封装成函数）
+               
+               然后分别赋值给anchors[net_f][conv2.conv.1.weight]
         '''
         # 初始化一个空字典，用于存储网络分数为1.0的网络的模型参数
         anchor_1_0 = {}
@@ -355,7 +354,7 @@ class Trainer:
 
 
         # 打印anchor_1_0字典中的参数形状
-        self.anchor_1_0 = anchor_1_0
+        # self.anchor_1_0 = anchor_1_0
         print("取出来的conv2.conv.1.weight tensor in anchor_1_0 shape:", anchor_1_0['conv2.conv.1.weight'].shape)
 
         for net_f in self.args.fraction_list:  # 对不同分数的网络进行处理
@@ -384,7 +383,7 @@ class Trainer:
                 for k in anchors[net_f]:
                     if k == 'conv2.conv.1.weight':
                         # 对于'conv2.conv.1.weight'键，执行赋值1.0操作
-                        anchors[net_f][k] = self.split_tensor_by_indices_10(anchor_1_0, top_channels_indices_75)
+                        anchors[net_f][k] = self.split_tensor_by_indices_10(anchor_1_0, self.top_channels_indices)
                         print("Shape of 1.00 tensor:", anchors[net_f][k].shape)
 
             # anchors[net_f] = anchor
@@ -400,7 +399,7 @@ class Trainer:
         for net_f in self.args.fraction_list:
             model_id = self.tester.budget_to_model(net_f)
             self.tester.model_list[model_id].load_state_dict(copy.deepcopy(anchors[net_f]), strict=False)
-            print("按照通道点火率分发参数完成")
+            print("按照通道点火率分发给",net_f,"完成")
             # self.tester.model_list[model_id].load_state_dict(copy.deepcopy(filter_banks), strict=False)
         return anchors
 
