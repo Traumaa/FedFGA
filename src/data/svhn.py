@@ -82,10 +82,15 @@ def load_SVHN_data(datadir):
 
     cifar10_train_ds = SVHN_truncated(datadir, download=True, transform=transform, split='train')
     cifar10_test_ds = SVHN_truncated(datadir, download=True, transform=transform,split='test')
-
+    # cifar10_train_ds = cifar10_train_ds.transpose((0, 2, 3, 1))
+    # cifar10_test_ds = cifar10_test_ds.transpose((0, 2, 3, 1))
     X_train, y_train = cifar10_train_ds.data, cifar10_train_ds.target
     X_test, y_test = cifar10_test_ds.data, cifar10_test_ds.target
-
+    # print(X_train.shape)
+    # print(y_train.shape)
+    # print(X_test.shape)
+    # print(y_test.shape)
+    # print(cifar10_train_ds)
 
 
 
@@ -125,7 +130,39 @@ def partition_data(args):
     return agent_dataid
 
 
-
+# def dirichlet_partition_data(args):  # ori
+#     y_train = load_cifar10_data(args.dir_data)[1]  # 取出训练标签
+#     num_users = args.n_agents
+#     alpha = args.alpha
+#     num_classes = 10
+#     class_partitions = {}
+#     class_lists = []
+#     prob_lists = []
+#
+#
+#
+#     client_data_distribution = np.random.dirichlet([alpha] * num_classes, num_users)
+#
+#     for distribution in client_data_distribution:
+#         prob_lists.append(list(distribution))
+#
+#     for client_id in range(num_users):
+#
+#         # label_distribution = np.random.dirichlet([alpha] * num_classes, size=1)[0]
+#         client_labels = list(range(num_classes))  # 标签类别列表
+#         # client_probs = list(label_distribution)  # 标签概率列表
+#
+#         class_lists.append(client_labels)
+#         # prob_lists.append(client_probs)
+#
+#
+#     class_partitions['class'] = class_lists
+#     class_partitions['prob'] = prob_lists
+#     agent_dataid = gen_data_split(y_train, num_users, num_classes, class_partitions)
+#     agent_dataid = agent_dataid # 字典里包含客户端和数据id
+#
+#     return agent_dataid
+#     # 客户端对应的data数据集id
 
 def dirichlet_partition_data(args):
     alpha = args.alpha
@@ -169,10 +206,34 @@ def dataset_stats(dict_users, dataset, args):
     plt.title('Data Distribution')
     plt.xlabel('Clients')
     plt.ylabel('Amount of Training Data')
-    plt.savefig('figs/fenbu.png', dpi=500)
+    plt.savefig('figs/fenbu_svhn_0.1.png', dpi=500)
     # plt.show()
 
-
+# 画图
+# def dataset_stats(dict_users, dataset, args):
+#     # dict users {0: array([], dtype=int64), 1: array([], dtype=int64), ..., 100: array([], dtype=int64)}
+#     stats = {i: np.array([], dtype='int64') for i in range(len(dict_users))}
+#     for key, value in dict_users.items():
+#         for x in value:
+#             stats[key] = np.concatenate((stats[key], np.array([dataset[x][1]])), axis=0)
+#
+#     nparray = np.zeros([args.num_classes, args.num_users], dtype=int)
+#     for j in range(args.num_users):
+#         cls = stats[j]
+#         cls_counter = Counter(cls)
+#         for i in range(args.num_classes):
+#             nparray[i][j] = cls_counter[i]
+#
+#     fig, ax = plt.subplots()
+#     bottom = np.zeros([args.num_users], dtype=int)
+#     for cls in range(args.num_classes):
+#         ax.bar(range(args.num_users), nparray[cls], bottom=bottom, label='class{}'.format(cls))
+#         bottom += nparray[cls]
+#     ax.legend(loc='lower right')
+#     plt.title('Data Distribution')
+#     plt.xlabel('Clients')
+#     plt.ylabel('Amount of Training Data')
+#     plt.show()
 
 
 
@@ -206,7 +267,7 @@ def get_agent_loader(args, kwargs):
 
     for i in range(args.n_agents):
         train_ds = SVHN_truncated(root=args.dir_data, dataidxs=agent_dataid[i], transform=transform_train, download=True, split='train')
-        # print(train_ds)
+        print(train_ds)
 
         train_dl = DataLoader(dataset=train_ds, batch_size=args.batch_size, shuffle=True, worker_init_fn=seed_worker,generator=g, **kwargs)
         loaders_train.append(train_dl)
@@ -257,7 +318,7 @@ def get_loader(args, kwargs):
             split='test',
             download=True,
             transform=transform_test),
-        batch_size=700, shuffle=False, **kwargs
+        batch_size=250, shuffle=False, **kwargs
     )
 
     return loader_train, loader_test

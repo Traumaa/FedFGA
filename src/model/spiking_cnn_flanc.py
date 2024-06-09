@@ -1,5 +1,5 @@
 
- import torchvision.models as models
+import torchvision.models as models
 import math
 import torch.nn as nn
 import torch.utils.model_zoo as model_zoo
@@ -114,23 +114,23 @@ class CNN_FLANC(nn.Module):
         X2 = torch.empty(m2, n2, 3, 3)
         torch.nn.init.orthogonal(X2)
         self.filter_bank_2.data = copy.deepcopy(X2)
-        self.sn1 = neuron.IFNode(v_threshold=self.th)
+
         out_1 = round(128*net_fract)
         self.conv1 = DecomBlock(self.filter_bank_1, 64, out_1, m1, n1, kernel_size=3, bias=False) # 28
-        self.sn2 = neuron.IFNode(v_threshold=self.th)
+        self.sn1 = neuron.IFNode(v_threshold=self.th)
         # self.relu1 = nn.ReLU(inplace=True)
         self.pool1 = layer.MaxPool2d(kernel_size=2, stride=2) # 14
 
         out_2 = round(128*net_fract)
         self.conv2 = DecomBlock(self.filter_bank_2, out_1, out_2, m2, n2, kernel_size=3, bias=False)
-        self.sn3 = neuron.IFNode(v_threshold=self.th)
+        self.sn2 = neuron.IFNode(v_threshold=self.th)
         # self.relu2 = nn.ReLU(inplace=True)
         self.pool2 = layer.MaxPool2d(kernel_size=2, stride=2) # 7
 
         # self.classifier = layer.Linear(out_2 * 7 * 7*32, 10)
         self.classifier = layer.Linear(out_2 * 7 * 7, 10)
 
-        self.sn4 = neuron.IFNode(v_threshold=self.th)
+        self.sn3 = neuron.IFNode(v_threshold=self.th)
 
         functional.set_step_mode(self, step_mode='m')  # # 设置为多步模式
 
@@ -141,14 +141,13 @@ class CNN_FLANC(nn.Module):
 
         x = self.head(x)    # (10,32,1,28,28)
         # print('head', x.shape)
-        x = self.sn1(x)
         x = self.conv1(x)   # (10,32,64,28,28)
-        x = self.sn2(x)     # (10,32,128,28,28)
+        x = self.sn1(x)     # (10,32,128,28,28)
         x = self.pool1(x)   # (10,32,128,28,28)
         # print('conv1:', x.shape)
 
         x = self.conv2(x)   # (10,32,128,14,14)
-        x = self.sn3(x)     # (10,32,128,14,14)
+        x = self.sn2(x)     # (10,32,128,14,14)
         x = self.pool2(x)   # (10,32,128,14,14)
         #print(x.shape)
         # print('conv2:', x.shape)
@@ -162,7 +161,7 @@ class CNN_FLANC(nn.Module):
         x = self.classifier(x)  # (10,32,6272)
         # print('全连接层:', x.shape)
 
-        x = self.sn4(x)       # (10,32,10)
+        x = self.sn3(x)       # (10,32,10)
         # print('网络输出:', x.shape)
         return x
 

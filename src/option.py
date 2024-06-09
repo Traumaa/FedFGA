@@ -7,6 +7,8 @@ parser = argparse.ArgumentParser(description='Deep Kernel Clustering')
 parser.add_argument('--T', type=int, default=10, help='simulating time-steps')
 parser.add_argument('--alpha', type=float, default=0.1, help='dirichlet alpha')
 
+# parser.add_argument('--gpus', nargs='+',default=None, type=str, help='gpus')
+
 parser.add_argument('--debug', action='store_true',
                     help='Enables debug mode')
 parser.add_argument('--template', default='',
@@ -21,6 +23,8 @@ parser.add_argument('--n_GPUs', type=int, default=1,
                     help='number of GPUs')
 parser.add_argument('--seed', type=int, default=1,
                     help='random seed')
+
+parser.add_argument('--gpus', nargs='+',default=None, type=str, help='gpus')
 
 # Data specifications
 parser.add_argument('--dir_data', default='/home/user/dataset/',

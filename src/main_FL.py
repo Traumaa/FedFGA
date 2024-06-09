@@ -1,5 +1,5 @@
 import torch
-
+import os
 import utility
 from data import Data
 from model import Model
@@ -13,6 +13,14 @@ from model.agent_federation import Agent
 # login wandb
 import wandb
 wandb.login(key='abe03d00c9ead3fd3daeb086692ff66c692a79e3')
+
+# # 选择gpu
+# os.environ["CUDA_DEVICE_ORDER"]="PCI_BUS_ID"
+# if args.gpus is None:
+#     gpus = "0"
+#     os.environ["CUDA_VISIBLE_DEVICES"]= gpus
+# else:
+#     os.environ["CUDA_VISIBLE_DEVICES"] = args.gpus[0]
 
 
 random.seed(0)
@@ -38,7 +46,7 @@ if checkpoint.ok:
     while not t.terminate():
         if agent_list[0].scheduler_list[0].last_epoch == -1 and not args.test_only:
             t.test()
-        t.train()
+        t.train() # 训练完成后进行参数同步【包括两部分参数，一部分是共享参数，另一部分是各自参数】，赋值给tester一份参数，然后进行测试
         t.test()
 
     checkpoint.done()

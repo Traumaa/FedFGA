@@ -106,21 +106,15 @@ class conv_basis(nn.Module):
 
             x_list = []
             for xi in torch.split(x, self.basis_size, dim=2):
-                # xi
                 conv2d = layer.Conv2d(in_channels=3, out_channels=3, kernel_size=1, bias=self.bias, stride=self.stride,
                                       padding=self.kernel_size // 2, step_mode='m')
                 conv2d.weight = self.weight
                 conv2d.padding = self.kernel_size // 2
                 conv2d.padding_mode = 'zeros'
-                # _ = conv2d(xi)  计算一次卷积操作
-                # _=snn(_)  加一个脉冲层
-                # record fr of _  记录该层的点火率
-                # panbieshi: if fr >xxx  判别是否点火率达到要求
-                x1 = conv2d(xi)  #
-                # todo: shixian fire rate func
+                x1 = conv2d(xi)
                 # print(1, x1.shape)
                 x_list.append(x1)
-            x = torch.cat(x_list, dim=2)  # 维度不匹配的问题
+            x = torch.cat(x_list, dim=2)
             # print(2, x.shape)
             # [10, 256, 16, 16, 16]  没有合并起来，调整dim = 2
             # torch.Size([10, 32, 128, 16, 16])

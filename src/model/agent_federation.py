@@ -1,8 +1,9 @@
-import enum
-import fractions
+
 import os
 from importlib import import_module
 from sched import scheduler
+
+import numpy as np
 import torch
 import torch.nn as nn
 from IPython import embed
@@ -10,21 +11,111 @@ import torch
 import torch.optim as optim
 import torch.optim.lr_scheduler as lrs
 import torchvision.utils as tu
+from matplotlib import pyplot as plt
 from tqdm import tqdm
 import copy
 from spikingjelly.activation_based import functional, monitor, neuron
 import torch.nn.functional as F
-from .fun import test_firerate
-import matplotlib.pyplot as plt
-import numpy as np
+
+
+class AverageMeter(object):
+    """Record metrics information"""
+
+    def __init__(self):
+        self.reset()
+
+    def reset(self):
+        self.val = 0.0
+        self.avg = 0.0
+        self.sum = 0.0
+        self.count = 0.0
+
+    def update(self, val, n=1):
+        self.val = val
+        self.sum += val
+        self.count += n
+        self.avg = self.sum / self.count
+
+
+def test_firerate(model, img):
+    # model.eval()
+    firerate_ = AverageMeter()
+    # SNN
+    functional.reset_net(model)
+
+    # 监视器
+    # 监视点火率函数
+    def cal_firing_rate(s_seq: torch.Tensor):
+        if len(s_seq.shape) == 5 and s_seq.shape[2] == 128:
+            # 选择所有组中每一列的元素
+            all_groups_all_columns = s_seq[:, :, :, :, :]
+            # 初始化一个空的列表，用于存储每一列的平均值
+            average_per_column_list = []
+
+            # 遍历每一列
+            for col_index in range(all_groups_all_columns.size(2)):
+                # 选择所有组中每一列的元素
+                column_elements = all_groups_all_columns[:, :, col_index, :, :]
+
+                # 求元素和
+                sum_column_elements = column_elements.sum()
+
+                # 获取元素个数
+                num_elements = column_elements.numel()
+
+                # 求平均值
+                average_column = sum_column_elements / num_elements
+
+                # 将平均值添加到列表中
+                average_per_column_list.append(average_column)
+
+            # average_per_column_list = average_per_column_list[-128:] # 取倒数第二层的128通道的点火率
+            # 返回每一列的平均值列表
+            return average_per_column_list
+
+    # def cal_firing_rate(s_seq: torch.Tensor):
+    #     while len(s_seq.shape) == 5 and s_seq.shape[2] == 32:
+    #         s_seq_1 = s_seq.mean(0)
+    #         s_seq_2 = s_seq_1.mean(0)
+    #         s_seq_3 = s_seq_2.mean(-1)
+    #         average_per_column_list = s_seq_3.mean(-1)
+    #
+    #         return average_per_column_list.tolist()
+
+    # def cal_firing_rate(s_seq: torch.Tensor):
+    #     # print(s_seq)
+    #     print(s_seq.shape)
+    #     return s_seq.flatten(1).mean(1)
+    # 设置监视器
+    # fr_monitor = monitor.OutputMonitor(model, neuron.IFNode)
+    fr_monitor = monitor.OutputMonitor(model, neuron.IFNode, cal_firing_rate)
+
+    functional.reset_net(model)
+    fr_monitor.enable()
+    model(img)
+
+    # record = fr_monitor.records
+    # record1 = record
+    # firerate = torch.sum(fr_monitor.records[-1])
+    firerate = fr_monitor.records
+    # --> fr_monitor.records shape:[torch.Size([10, 500, 64, 28, 28]), torch.Size([10, 500, 32, 28, 28]), torch.Size([10, 500, 32, 14, 14]), torch.Size([10, 500, 10])]，然后将每个tensor展平，求平均得到每个时间步的点火率。依次按照32通道递减，如果将32个通道看作一组，如何输出不同组的点火率？
+    firerate_np = np.array([t.cpu().item() for sublist in firerate if sublist is not None for t in sublist])  # 去除cuda
+
+    functional.reset_net(model)
+    # del fr_monitor
+    fr_monitor.remove_hooks()
+
+    # return firerate_.sum
+    return firerate_np
 
 
 class Agent:
     def __init__(self, *args):
         super(Agent, self).__init__()
+        self.top_channels_indices = []
         print('Init Agent {} and making models...'.format(args[2]))
 
-        self.args = args[0] # args should contain slim rate
+        self.args = args[0]  # args should contain slim rate
         self.ckp = args[1]
         self.my_id = args[2]
         self.crop = self.args.crop
@@ -33,14 +124,12 @@ class Agent:
         self.n_GPUs = self.args.n_GPUs
         self.save_models = self.args.save_models
         self.fractions = self.args.fraction_list
-        self.num_classes = 100 if "cifar100" in self.args.data_train else 10
-        self.top_channels_indices = None
 
         # To do... If not use resume, share ckp may be safe
 
         print("Init a List of Models")
         model_list = []
-        self.budget_model = {net_f:i for i,net_f in enumerate(self.fractions)}
+        self.budget_model = {net_f: i for i, net_f in enumerate(self.fractions)}
 
         # 根据传入的fractions，将moudle拆分成不同规模的网络
         for net_f in self.fractions:
@@ -72,30 +161,26 @@ class Agent:
 
         self.summarize(self.ckp)
 
-
     def test_all(self, loader_test, timer_test, run, epoch):
         timer_test = timer_test
-        num_class = self.num_classes # if "cifar100" in args.data_train else 10
-        for i, model in enumerate(self.model_list):  # 对每个模型进行测试
+
+        for i, model in enumerate(self.model_list):
             self.model_list[i] = self.model_list[i].to(self.device)
             self.loss_list[i].start_log(train=False)
             model.eval()
             with torch.no_grad():  # torch.no_grad() 在 PyTorch 中关闭梯度计算
-                for img, label in tqdm(loader_test, ncols=80):   # 需要处理lable  img（500,1,28,28）
+                for img, label in tqdm(loader_test, ncols=80):  # 需要处理lable
 
                     img, label = self.prepare(img, label)
-                    label_onehot = F.one_hot(label, num_class).float()  # label(500,10)
+                    label_onehot = F.one_hot(label, 10).float()  # label(500,10)
                     torch.cuda.synchronize()
                     timer_test.tic()
 
-                    functional.reset_net(model)
-
                     prediction = model(img)  # (10,500,10)
-                    prediction = torch.mean(prediction, dim=0)  # (10,500,10) -> (500,10)
-                    if i ==3:
+                    prediction = torch.mean(prediction, dim=0)  # (500,10)
+                    if i == 3:
                         firerate = test_firerate(model, img)  # 点火率
                         firerate = firerate[-128:]
-                    # firerate_shape = [tensor.shape for tensor in firerate]
 
                     torch.cuda.synchronize()
                     timer_test.hold()
@@ -104,21 +189,24 @@ class Agent:
                     functional.reset_net(model)
 
             self.loss_list[i].end_log(len(loader_test.dataset), train=False)
-            best = self.loss_list[i].log_test.min(0)
+            a = self.loss_list[i]
+            b = a.log_test
+            best = b.min(0)
+            # best = self.loss_list[i].log_test.min(0)
             self.model_list[i] = self.model_list[i].to('cpu')
-
-
-
             for j, measure in enumerate(('Loss', 'Top1 error', 'Top5 error')):
                 self.ckp.write_log(
-                    'model {} {}: {:.3f} (Best: {:.3f} from epoch {})'.format(  # model 0 Loss: 2.200 (Best: 2.200 from epoch 0)
+                    'model {} {}: {:.3f} (Best: {:.3f} from epoch {})'.format(
+                        # model 0 Loss: 2.200 (Best: 2.200 from epoch 0)
                         i,  # 0
-                        measure, # loss
-                        self.loss_list[i].log_test[-1, j], # 2.200，最后一行的0，1，2分别是当前的loss，Top1 error和Top5
-                        best[0][j], # 2.200，best的第一行0，1，2元素分别是最优的loss，Top1 error和Top5
-                        best[1][j] + 1 if len(self.loss_list[i].log_test) == len(self.loss_list[i].log_train) else best[1][j], #轮次
-                        )
+                        measure,  # loss
+                        self.loss_list[i].log_test[-1, j],  # 2.200
+                        best[0][j],  # 2.200
+                        best[1][j] + 1 if len(self.loss_list[i].log_test) == len(self.loss_list[i].log_train) else
+                        best[1][j]  # 0
                     )
+                )
+
             if i == 3:
                 # 当开始测试1.0模型时，测试倒数第二层的点火率
                 # print(print(f"Firerate type: {type(firerate)}"))
@@ -134,19 +222,14 @@ class Agent:
                 self.top_channels_indices = top_channels_indices
                 print("\nfirerate:\n", firerate)
                 print(self.top_channels_indices)
-                # self.plot_firing_rate(firerate)
-                # sorted_firerate = [rate for _, rate in max_firerate_channels]
-                # self.plot_firing_rate(sorted_firerate)
 
-            # todo: 拆分完整网络参数并赋值给0.25网络
-            run.log({"acc @ {}".format(self.fractions[i]): 100-self.loss_list[i].log_test[-1, self.args.top]},step=epoch-1)
+            run.log({"acc @ {}".format(self.fractions[i]): 100 - self.loss_list[i].log_test[-1, self.args.top]},
+                    step=epoch - 1)
             total_time = timer_test.release()
             is_best = self.loss_list[i].log_test[-1, self.args.top] <= best[0][self.args.top]
             self.ckp.save(self, i, epoch, is_best=is_best)
-            #self.ckp.save_results(epoch, i, model)
+            # self.ckp.save_results(epoch, i, model)
             self.scheduler_list[i].step()
-
-            # return self.top_channels_indices
 
     def plot_firing_rate(self, firerate):
         # Generate x axis positions
@@ -178,32 +261,11 @@ class Agent:
         plt.savefig(filepath)
         plt.clf()
 
-
-
-    # def plot_firing_rate(self, firerate_data):
-    #     # 确保 firerate 文件夹存在
-    #     if not os.path.exists("firerate"):
-    #         os.makedirs("firerate")
-    #
-    #     # 遍历每次循环的点火率列表
-    #     for n, firerate in enumerate(firerate_data, start=1):
-    #         # 创建柱状图
-    #         # firerate_list = list(firerate)
-    #         plt.bar(range(1, len(firerate) + 1), firerate)
-    #         plt.title(f"Epoch {n} Firerate")
-    #         plt.xlabel("Channel")
-    #         plt.ylabel("Firerate")
-    #         plt.savefig(f"firerate/epoch_{n}_firerate.png")
-    #         plt.clf()  # 清除图形，准备下一次循环
-    #
-    #     print("柱状图已保存到 firerate 文件夹中。")
-
     def budget_to_model(self, budget):
         return self.budget_model[budget]
 
     def train_local(self, loader_train, budget, epochs):
 
-        num_classes = self.num_classes
         model_id = self.budget_to_model(budget)
         loss_list = []
         loss_orth_list = []
@@ -211,38 +273,37 @@ class Agent:
         self.model_list[model_id] = self.model_list[model_id].to(self.device)
         for epoch in range(epochs):
             for batch, (img, label) in enumerate(loader_train):
-                img, label = self.prepare(img, label)  # .half()取半精度
-                n_samples += img.size(0)  # 32
-                label_onehot = F.one_hot(label, num_classes).float() # label_onehot（32，10）
+                # print("img:",img.shape)
+                # print("label:", label.shape)
+                img, label = self.prepare(img, label)
+                # print("img:",img.shape)
+                # print("label:", label.shape)
+                n_samples += img.size(0)
+                label_onehot = F.one_hot(label, 10).float()  # label_onehot（32，10）
 
-                self.optimizer_list[model_id].zero_grad()  # 用来将特定模型（model_id）对应的优化器的梯度清零。
-                prediction = self.forward(img, model_id)    # prediction（10，32，10）
+                self.optimizer_list[model_id].zero_grad()
+                prediction = self.forward(img, model_id)  # prediction（10，32，10）
                 prediction = torch.mean(prediction, dim=0)  # prediction（32，10） 在第一个维度上取平均
                 # prediction = prediction
                 # prediction = prediction/10 #args.T
 
                 loss, _ = self.loss_list[model_id](prediction, label_onehot, label)
 
-
-                loss_orth = self.args.lambdaR*self.module.orth_loss(self.model_list[model_id],self.args,'L2')
+                loss_orth = self.args.lambdaR * self.module.orth_loss(self.model_list[model_id], self.args, 'L2')
                 loss = loss_orth + loss
                 loss_orth_list.append(loss_orth.item())
 
-                loss.backward()  # 计算网络参数相对于损失函数的梯度
+                loss.backward()
 
                 self.optimizer_list[model_id].step()
 
-                loss_list.append(loss.item())  # 376
+                loss_list.append(loss.item())
                 functional.reset_net(self.model_list[model_id])
 
-
-        log_train = self.loss_list[model_id].log_train[-1,:]/n_samples
+        log_train = self.loss_list[model_id].log_train[-1, :] / n_samples
         self.model_list[model_id] = self.model_list[model_id].to('cpu')
 
-
-        return sum(loss_list)/len(loss_list), sum(loss_orth_list)/len(loss_orth_list), log_train
-        # loss, loss_orth, log_train
-
+        return sum(loss_list) / len(loss_list), sum(loss_orth_list) / len(loss_orth_list), log_train
 
     def train_one_step(self, img, label):
         loss_list = []
@@ -250,10 +311,9 @@ class Agent:
         for i, _ in enumerate(self.model_list):
             self.optimizer_list[i].zero_grad()
             prediction = self.forward(img, i)
-            loss, _ = self.loss_list[i](prediction, label,)
+            loss, _ = self.loss_list[i](prediction, label, )
 
-
-            loss_orth = self.args.lambdaR*self.module.orth_loss(self.model_list[i],self.args,'L2')
+            loss_orth = self.args.lambdaR * self.module.orth_loss(self.model_list[i], self.args, 'L2')
             loss = loss_orth + loss
             loss_orth_list.append(loss_orth.item())
 
@@ -267,31 +327,29 @@ class Agent:
 
         return loss_list, loss_orth_list
 
-    def sync_at_init(self):   # 初始化阶段同步滤波器的权重kv
+    def sync_at_init(self):
         n_models = len(self.model_list)
         filter_banks = {}
-        for k,v in self.model_list[0].state_dict().items():
+        for k, v in self.model_list[0].state_dict().items():
             if 'filter_bank' in k:
                 filter_banks[k] = v
 
         for i in range(n_models):
             self.model_list[i].load_state_dict(copy.deepcopy(filter_banks), strict=False)
 
-
-    def sync_filter(self):   # 初始化滤波器
+    def sync_filter(self):
         n_models = len(self.model_list)
         filter_banks = {}
-        for k,v in self.model_list[0].state_dict().items():
+        for k, v in self.model_list[0].state_dict().items():
             if 'filter_bank' in k:
                 filter_banks[k] = torch.zeros(v.shape).cuda()
 
         for k in filter_banks:
             for model in self.model_list:
                 state_dict = model.state_dict()
-                filter_banks[k]+=state_dict[k]*(1./n_models)
+                filter_banks[k] += state_dict[k] * (1. / n_models)
 
         for i in range(n_models):
-
             self.model_list[i].load_state_dict(copy.deepcopy(filter_banks), strict=False)
 
     def forward(self, x, i):
@@ -334,7 +392,7 @@ class Agent:
             if c:
                 torch.save(
                     target,
-                    os.path.join(apath, 'model', 'model_m{}_{}.pt'.format(i,n))
+                    os.path.join(apath, 'model', 'model_m{}_{}.pt'.format(i, n))
                 )
 
     def load_all(self, apath, pretrained='', load='', resume=-1, cpu=False):
@@ -354,9 +412,9 @@ class Agent:
                     print('Load model {} after the last epoch'.format(i))
                     resume = 'latest'
                 else:
-                    print('Load model {} after epoch {}'.format(i,resume))
+                    print('Load model {} after epoch {}'.format(i, resume))
 
-                f = os.path.join(apath, 'model', 'model_m{}_{}.pt'.format(i,resume))
+                f = os.path.join(apath, 'model', 'model_m{}_{}.pt'.format(i, resume))
 
         if f:
             kwargs = {}
@@ -379,7 +437,7 @@ class Agent:
 
     def start_loss_log(self):
         for loss in self.loss_list:
-            loss.start_log() #create a tensor
+            loss.start_log()  # create a tensor
 
     def log_all(self, ckp):
         for i, _ in enumerate(self.model_list):
@@ -392,8 +450,9 @@ class Agent:
     def summarize(self, ckp):
         for i, _ in enumerate(self.model_list):
             ckp.write_log('# parameters of model {}: {:,}'.format(i,
-                sum([p.nelement() for p in self.model_list[i].parameters()])
-            ))
+                                                                  sum([p.nelement() for p in
+                                                                       self.model_list[i].parameters()])
+                                                                  ))
 
             kernels_1x1 = 0
             kernels_3x3 = 0
@@ -420,6 +479,7 @@ class Agent:
                 ),
                 refresh=True
             )
+
     def make_optimizer_all(self, ckp=None, lr=None):
         ret = []
         for i, _ in enumerate(self.model_list):
@@ -434,7 +494,7 @@ class Agent:
             kwargs = {'momentum': self.args.momentum, 'nesterov': self.args.nesterov}
 
         kwargs['lr'] = self.args.lr if lr is None else lr
-        kwargs['weight_decay'] = self.args.weight_decay  #
+        kwargs['weight_decay'] = self.args.weight_decay
         # embed()
         optimizer = optimizer_function(trainable, **kwargs)
 
@@ -445,8 +505,9 @@ class Agent:
             )
 
         return optimizer
+
     def make_loss_all(self, Loss):
-        self.loss_list = [Loss(self.args, self.ckp) for _ in self.fractions]  # 对不同分数的模型创建一个loss
+        self.loss_list = [Loss(self.args, self.ckp) for _ in self.fractions]
 
     def make_scheduler_all(self, resume=-1, last_epoch=-1, reschedule=-1):
         ret = []
@@ -454,7 +515,7 @@ class Agent:
             ret.append(self.make_scheduler(s, resume, last_epoch, reschedule))
         self.scheduler_list = ret
 
-    def make_scheduler(self, target, resume=-1, last_epoch=-1, reschedule=0):  # 学习率衰减
+    def make_scheduler(self, target, resume=-1, last_epoch=-1, reschedule=0):
         if self.args.decay.find('step') >= 0:
             milestones = list(map(lambda x: int(x), self.args.decay.split('-')[1:]))
             kwargs = {'milestones': milestones, 'gamma': self.args.gamma}
@@ -466,14 +527,14 @@ class Agent:
 
         if self.args.load != '' and resume > 0:
             for _ in range(resume): scheduler.step()
-        if reschedule>0:
+        if reschedule > 0:
             for _ in range(reschedule): scheduler.step()
         return scheduler
+
     def prepare(self, *args):
         def _prepare(x):
             x = x.to(self.device)
-            if self.args.precision == 'half': x = x.half()  # 取半精度，加快训练和减少显存
+            if self.args.precision == 'half': x = x.half()
             return x
 
         return [_prepare(a) for a in args]
-

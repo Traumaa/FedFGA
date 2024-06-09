@@ -12,7 +12,7 @@ from PIL import Image
 
 from collections import Counter
 import matplotlib.pyplot as plt
-#
+
 # import seaborn as sns
 # import sys
 
@@ -196,7 +196,7 @@ def dataset_stats(dict_users, dataset, args):
     plt.title('Data Distribution')
     plt.xlabel('Clients')
     plt.ylabel('Amount of Training Data')
-    plt.savefig('figs/0929_fenbu_dirichlet_0.3.png', dpi=500)
+    plt.savefig('figs/fenbu_noiid_0.3.png', dpi=500)
     # plt.show()
 
 # 画图
@@ -237,6 +237,8 @@ def get_agent_loader(args, kwargs):
     data_train = load_cifar10_data(args.dir_data)[4]
     # data_train = datasets.CIFAR10(train=True, download=True, transform=trans_cifar)
     dataset_stats(agent_dataid, data_train, args)
+
+
 
     norm_mean=[x/255.0 for x in [125.3, 123.0, 113.9]]
     norm_std=[x/255.0 for x in [63.0, 62.1, 66.7]]

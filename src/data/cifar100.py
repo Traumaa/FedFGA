@@ -10,9 +10,6 @@ import numpy as np
 import collections
 from PIL import Image
 
-from collections import Counter
-import matplotlib.pyplot as plt
-
 class CIFAR100_truncated(data.Dataset):
     def __init__(self, root, dataidxs=None, train=True, transform=None, target_transform=None, download=False):
         self.root = root
@@ -68,80 +65,6 @@ def gen_data_split(data, num_users, num_classes, class_partitions):
         np.random.shuffle(user_data_idx[usr])
     return user_data_idx
 
-def partition_data(args):
-    y_train = load_cifar10_data(args.dir_data)[1]  #取出训练标签
-    num_classes = 10
-    classes_per_user = 10 if args.split=='iid' else 3  # 根据args.split的值来确定每个智能体（agent）分配的类别数。如果args.split为'iid'，则每个客户端分配10个类别，否则分配3个类别。
-    num_users = args.n_agents
-
-    assert (classes_per_user * num_users) % num_classes == 0, "equal classes appearance is needed"  # 判断每个（agent）分配的类别数量满足要求的
-    count_per_class = (classes_per_user * num_users) // num_classes  # 10*10/10=10  3*10/10=3
-    class_dict = {}
-    for i in range(num_classes):  # 给十个客户端分配类别概率
-        probs = np.random.uniform(1, 1, size=count_per_class) # 111...
-        probs_norm = (probs / probs.sum()).tolist() # 进行归一化，将数组转换为列表
-        class_dict[i] = {'count': count_per_class, 'prob': probs_norm}
-    # {0:{count:10, prob=[0.1,0.1,0.1.......]}}
-    class_partitions = collections.defaultdict(list)
-    for i in range(num_users): # 给每个客户端分配数据类别id
-        c = [] # 存储当前用户选择的类别
-        for _ in range(classes_per_user): #10 或者3  选择三个类别加入客户端
-            class_counts = [class_dict[i]['count'] for i in range(num_classes)] # 数据类别计数[10,10,10,10...]  或者[3，3，3，3...]
-            max_class_counts = np.where(np.array(class_counts) == max(class_counts))[0] #0
-            c.append(np.random.choice(max_class_counts))
-            class_dict[c[-1]]['count'] -= 1  # class_dict会逐渐减少
-        class_partitions['class'].append(c) #
-        class_partitions['prob'].append([class_dict[i]['prob'].pop() for i in c]) # 字典里包含类别和概率
-
-    agent_dataid = gen_data_split(y_train, num_users, num_classes, class_partitions)
-    # agent_dataid = agent_dataid # 字典里包含客户端和数据id
-
-    return agent_dataid
-
-def dirichlet_partition_data(args):
-    alpha = args.alpha
-    num_users = args.n_agents
-
-
-    labels = load_cifar100_data(args.dir_data)[1]
-    n_classes = labels.max() + 1  # 10
-    idx = [np.argwhere(np.array(labels) == y).flatten() for y in range(n_classes)]
-    label_distribution = np.random.dirichlet([alpha]*num_users, n_classes)
-
-    agent_dataid = {i: np.array([], dtype='int64') for i in range(num_users)}
-    for c, fracs in zip(idx, label_distribution):
-        for i, idcs in enumerate(np.split(c, (np.cumsum(fracs)[:-1] * len(c)).astype(int))):
-            agent_dataid[i] = np.concatenate((agent_dataid[i], idcs), axis=0)
-
-    return agent_dataid
-
-def dataset_stats(dict_users, dataset, args):
-    # dict users {0: array([], dtype=int64), 1: array([], dtype=int64), ..., 100: array([], dtype=int64)}
-    num_classes = 10
-    stats = {i: np.array([], dtype='int64') for i in range(len(dict_users))}
-    for key, value in dict_users.items():
-        for x in value:
-            stats[key] = np.concatenate((stats[key], np.array([dataset[x][1]])), axis=0)  #dataset[x][1]]是数据x的标签
-
-    nparray = np.zeros([num_classes, args.n_agents], dtype=int)
-    for j in range(args.n_agents):
-        cls = stats[j]
-        cls_counter = Counter(cls)
-        for i in range(num_classes):
-            nparray[i][j] = cls_counter[i]
-
-    fig, ax = plt.subplots()
-    bottom = np.zeros([args.n_agents], dtype=int)
-    for cls in range(num_classes):
-        ax.bar(range(args.n_agents), nparray[cls], bottom=bottom, label='class{}'.format(cls))
-        bottom += nparray[cls]
-    ax.legend(loc='lower right')
-    plt.title('Data Distribution')
-    plt.xlabel('Clients')
-    plt.ylabel('Amount of Training Data')
-    plt.savefig('figs/cifar100_fenbu_iid.png', dpi=500)
-    # plt.show()
-
 def load_cifar100_data(datadir):
     transform = transforms.Compose([transforms.ToTensor()])
 
@@ -151,7 +74,7 @@ def load_cifar100_data(datadir):
     X_train, y_train = cifar10_train_ds.data, cifar10_train_ds.target
     X_test, y_test = cifar10_test_ds.data, cifar10_test_ds.target
 
-    return (X_train, y_train, X_test, y_test, cifar10_train_ds)
+    return (X_train, y_train, X_test, y_test)
 
 
 
@@ -186,15 +109,7 @@ def partition_data(args):
 
 def get_agent_loader(args, kwargs):
     loaders_train = []
-    # agent_dataid = partition_data(args) #dict
-    if args.split == 'iid':
-        agent_dataid = partition_data(args) #独立同分布
-    else:
-        agent_dataid = dirichlet_partition_data(args)
-
-    data_train = load_cifar100_data(args.dir_data)[4]
-    dataset_stats(agent_dataid, data_train, args)
-
+    agent_dataid = partition_data(args) #dict
     norm_mean=[x/255.0 for x in [125.3, 123.0, 113.9]]
     norm_std=[x/255.0 for x in [63.0, 62.1, 66.7]]
     g = torch.Generator()
